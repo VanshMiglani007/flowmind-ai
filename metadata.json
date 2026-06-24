@@ -1,0 +1,6 @@
+{
+  "name": "FlowMind AI",
+  "description": "An extremely modern, futuristic AI-powered productivity workspace combining smart task management, daily planning, a productivity coach, and interactive focus tools.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
