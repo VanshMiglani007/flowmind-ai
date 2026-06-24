@@ -15,6 +15,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = 3000;
+const GEMINI_MODEL = "gemini-2.0-flash";
 
 // Lazy initialization of Gemini client
 let aiInstance: GoogleGenAI | null = null;
@@ -32,6 +33,7 @@ function getGeminiClient() {
         }
       }
     });
+    console.log(`Gemini model initialized successfully: ${GEMINI_MODEL}`);
   }
   return aiInstance;
 }
@@ -106,7 +108,7 @@ app.post("/api/gemini/chat", async (req: Request, res: Response) => {
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: GEMINI_MODEL,
       contents,
       config: {
         systemInstruction: systemInstruction || "You are a professional, calm, and supportive AI Productivity Coach inside 'FlowMind AI'. Help the user with planning, focus, and stress management.",
@@ -131,7 +133,7 @@ app.post("/api/gemini/prioritize", async (req: Request, res: Response) => {
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: GEMINI_MODEL,
       contents: `Perform a professional prioritization and deadline risk assessment on these tasks.
 The user is currently feeling: "${mood || 'focused'}".
 
@@ -188,7 +190,7 @@ app.post("/api/gemini/plan", async (req: Request, res: Response) => {
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: GEMINI_MODEL,
       contents: `Generate an intelligent, highly optimized, customized day schedule for standard hours: ${workHoursStart || '09:00'} to ${workHoursEnd || '17:00'}.
 User mood: "${mood || 'focused'}".
 User self-reported stress level: "${stressLevel || 'medium'}".
@@ -286,7 +288,7 @@ app.post("/api/gemini/breakdown", async (req: Request, res: Response) => {
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: GEMINI_MODEL,
       contents: `Break down the goal/task: "${title}"
 Details: "${description || 'None'}"
 Convert this into 4 to 6 actionable subtasks with durations.`,
@@ -327,7 +329,7 @@ app.post("/api/gemini/insights", async (req: Request, res: Response) => {
 
     const ai = getGeminiClient();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: GEMINI_MODEL,
       contents: `Generate a Weekly Review and Productivity Diagnosis.
 Stats context:
 - Completed tasks: ${completedTasksCount || 0}
