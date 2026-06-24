@@ -61,7 +61,7 @@ Powered by a secure server-side **Google Gemini AI API Integration** configured 
 ## ⚡ Key Architectural Integrations
 
 ### 🤖 Google Gemini AI & Google AI Studio
-FlowMind AI uses the cutting-edge **`gemini-3.5-flash`** model to drive its scheduling engine and chatbot:
+FlowMind AI uses the cutting-edge **`gemini-2.5-flash`** model to drive its scheduling engine and chatbot:
 *   **Structured Output Schemas**: All planner and task prioritization data is returned in strict JSON matching custom TypeScript interfaces using the schema builder of the `@google/genai` Node SDK.
 *   **Prompt Engineering**: Context-rich prompts supply user statistics (streak counts, mood logs, deadline proximity) to tailor personalized productivity advice.
 
@@ -206,7 +206,7 @@ sequenceDiagram
 
     User->>Server: HTTP POST /api/gemini/chat { contents, mood }
     Note over Server: dotenv loads GEMINI_API_KEY from .env.local
-    Server->>Gemini: Models.generateContent(gemini-3.5-flash)
+    Server->>Gemini: Models.generateContent(gemini-2.5-flash)
     Gemini-->>Server: JSON Response with Content
     Server->>User: JSON Payload
 ```
