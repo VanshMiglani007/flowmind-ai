@@ -579,12 +579,12 @@ export default function App() {
   // ==================================================
 
   // 1. CHATBOT BOT SENDER GATEWAY
-  const handleSendMessageToAI = async (contents: any[], systemInstruction?: string) => {
-    const response = await fetch("/api/gemini/chat", {
+  const handleSendMessageToAI = async (contents: any[], systemInstruction?: string, onRetry?: (attempt: number) => void) => {
+    const response = await fetchWithRetry("/api/gemini/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contents, systemInstruction })
-    });
+    }, 2, onRetry);
     if (!response.ok) {
       const err = await response.json();
       throw new Error(err.error || "Failed to communicate with AI Coach.");
@@ -600,7 +600,7 @@ export default function App() {
       const activeTasks = tasks.filter(t => !t.completed);
       const completedTasksCount = tasks.filter(t => t.completed).length;
 
-      const response = await fetch("/api/gemini/insights", {
+      const response = await fetchWithRetry("/api/gemini/insights", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -639,7 +639,7 @@ export default function App() {
       const targetTask = tasks.find(t => t.id === id);
       if (!targetTask) return;
 
-      const response = await fetch("/api/gemini/prioritize", {
+      const response = await fetchWithRetry("/api/gemini/prioritize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -689,7 +689,7 @@ export default function App() {
       const targetTask = tasks.find(t => t.id === id);
       if (!targetTask) return;
 
-      const response = await fetch("/api/gemini/breakdown", {
+      const response = await fetchWithRetry("/api/gemini/breakdown", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -738,7 +738,7 @@ export default function App() {
     setIsGeneratingPlan(true);
     try {
       const activeTasks = tasks.filter(t => !t.completed);
-      const response = await fetch("/api/gemini/plan", {
+      const response = await fetchWithRetry("/api/gemini/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
