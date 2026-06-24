@@ -86,6 +86,15 @@ function parseGeminiResponse(text: string | undefined): any {
   }
 }
 
+// Backend test and health endpoints
+app.get("/api/health", (req: Request, res: Response) => {
+  res.json({ status: "ok" });
+});
+
+app.get("/api/test", (req: Request, res: Response) => {
+  res.json({ message: "FlowMind backend operational" });
+});
+
 // 1. CHATBOT ASSISTANT ENDPOINT
 app.post("/api/gemini/chat", async (req: Request, res: Response) => {
   try {
