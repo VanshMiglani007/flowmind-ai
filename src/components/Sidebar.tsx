@@ -19,9 +19,10 @@ interface SidebarProps {
   xp: number;
   level: number;
   onReturnToLanding?: () => void;
+  isCoachLive?: boolean;
 }
 
-export default function Sidebar({ activeTab, setActiveTab, xp, level, onReturnToLanding }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, xp, level, onReturnToLanding, isCoachLive }: SidebarProps) {
   const nextLevelXp = level * 500;
   const prevLevelXp = (level - 1) * 500;
   const currentLevelProgress = xp - prevLevelXp;
@@ -83,7 +84,7 @@ export default function Sidebar({ activeTab, setActiveTab, xp, level, onReturnTo
               <Icon className={`w-5 h-5 transition-transform duration-200 ${isActive ? "text-cyan-400" : "text-white/50"}`} />
               <span className="font-medium text-sm">{item.name}</span>
               
-              {item.id === "coach" && (
+              {item.id === "coach" && isCoachLive && (
                 <span className="ml-auto text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded-full flex items-center gap-1">
                   <Sparkles className="w-2.5 h-2.5 text-cyan-300 animate-spin" style={{ animationDuration: '6s' }} /> Live
                 </span>

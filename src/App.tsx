@@ -172,8 +172,10 @@ export default function App() {
   const [showLevelUpModal, setShowLevelUpModal] = useState(false);
   const [unlockedLevel, setUnlockedLevel] = useState(1);
 
-  // Network State and Offline Synchronization
+  // Network and AI Coach live state
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isCoachLive, setIsCoachLive] = useState(false);
+
 
   const handleSyncOfflineQueue = async () => {
     const queue = getOfflineQueue();
@@ -227,6 +229,26 @@ export default function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
+  }, []);
+
+  // Health check polling: determine if AI Coach backend is reachable
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval>;
+    const checkHealth = async () => {
+      try {
+        const res = await fetch("/api/health", { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          setIsCoachLive(true);
+        } else {
+          setIsCoachLive(false);
+        }
+      } catch {
+        setIsCoachLive(false);
+      }
+    };
+    checkHealth();
+    intervalId = setInterval(checkHealth, 30000);
+    return () => clearInterval(intervalId);
   }, []);
 
   // Auto-sync state modifications to LocalStorage
@@ -579,18 +601,26 @@ export default function App() {
   // ==================================================
 
   // 1. CHATBOT BOT SENDER GATEWAY
-  const handleSendMessageToAI = async (contents: any[], systemInstruction?: string, onRetry?: (attempt: number) => void) => {
-    const response = await fetchWithRetry("/api/gemini/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents, systemInstruction })
-    }, 2, onRetry);
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || "Failed to communicate with AI Coach.");
+  const handleSendMessageToAI = async (contents: any[], systemInstruction?: string, onRetry?: (attempt: number, errorMsg: string) => void) => {
+    try {
+      const response = await fetchWithRetry("/api/gemini/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents, systemInstruction })
+      }, 2, onRetry);
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Failed to communicate with AI Coach.");
+      }
+      const data = await response.json();
+      // Successful response: restore live status
+      setIsCoachLive(true);
+      return data.text || "Diagnostic synapsing yielded empty payload.";
+    } catch (err) {
+      // Mark coach as offline only after retries are exhausted
+      setIsCoachLive(false);
+      throw err;
     }
-    const data = await response.json();
-    return data.text || "Diagnostic synapsing yielded empty payload.";
   };
 
   // 2. TRIGGER AI DIAGNOSTIC INSIGHTS
@@ -866,6 +896,7 @@ export default function App() {
             xp={xp} 
             level={level} 
             onReturnToLanding={() => setShowLanding(true)}
+            isCoachLive={isCoachLive}
           />
 
       {/* Main viewport Container */}

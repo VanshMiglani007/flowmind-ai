@@ -132,7 +132,7 @@ export async function fetchWithRetry(
   url: string,
   options: RequestInit,
   maxRetries: number = 2,
-  onRetryAttempt?: (attempt: number) => void
+  onRetryAttempt?: (attempt: number, errorMsg: string) => void
 ): Promise<Response> {
   // Check online status first
   if (!navigator.onLine) {
@@ -158,12 +158,13 @@ export async function fetchWithRetry(
       
       // Notify client code about retry attempt to trigger cool UI status
       if (onRetryAttempt) {
-        onRetryAttempt(attempt);
+        onRetryAttempt(attempt, err.message || "Unknown error");
       }
       
-      // Cooldown delay with progressive backoff: 1s, 2.5s
-      const delayMs = attempt === 1 ? 1200 : 2500;
+      // Cooldown delay with progressive/exponential backoff: 1.5s, 4.0s
+      const delayMs = attempt === 1 ? 1500 : 4000;
       await delay(delayMs);
     }
   }
 }
+

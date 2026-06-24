@@ -109,7 +109,7 @@ function MessageBubble({ msg, isUser, onSpeak, animateReveal }: MessageBubblePro
 }
 
 interface AICoachProps {
-  onSendMessage: (contents: any[], systemInstruction?: string, onRetry?: (attempt: number) => void) => Promise<string>;
+  onSendMessage: (contents: any[], systemInstruction?: string, onRetry?: (attempt: number, errorMsg: string) => void) => Promise<string>;
   tasksContext: any;
   habitsContext: any;
   isOnline: boolean;
@@ -393,8 +393,14 @@ Context regarding current workspace:
     }
 
     try {
-      const coachResponse = await onSendMessage(contentsPayload, systemInstruction, (attempt) => {
-        setRetryStatus(`Connection lost. Attempting to reconnect... (Attempt ${attempt} of 2)`);
+      const coachResponse = await onSendMessage(contentsPayload, systemInstruction, (attempt, errorMsg) => {
+        if (errorMsg.includes("503") || errorMsg.includes("unavailable")) {
+          setRetryStatus(`Google Gemini is heavily overloaded. Retrying connection... (Attempt ${attempt} of 2)`);
+        } else if (errorMsg.includes("429")) {
+          setRetryStatus(`Rate limit hit. Waiting for cooldown and retrying... (Attempt ${attempt} of 2)`);
+        } else {
+          setRetryStatus(`Connection unresponsive. Retrying... (Attempt ${attempt} of 2)`);
+        }
       });
 
       setMessages(prev => [...prev, { role: "model" as const, text: coachResponse, timestamp: Date.now() }]);
