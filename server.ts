@@ -177,40 +177,52 @@ app.post("/api/gemini/chat", async (req: Request, res: Response) => {
       return;
     }
 
-    // Check local smart responses before hitting Gemini (saves quota)
-    const lastUserMessage = contents
-      .filter((c: any) => c.role === "user")
-      .map((c: any) => c.parts?.map((p: any) => p.text).join(" ") || "")
-      .pop() || "";
-    const localResponse = getLocalSmartResponse(lastUserMessage);
-    if (localResponse) {
-      const localResult = { text: localResponse };
-      setCache(cacheKey, localResult);
-      res.json(localResult);
-      return;
-    }
+    try {
+      const result = await enqueueGeminiRequest(async () => {
+        const ai = getGeminiClient();
+        const tokenEstimate = estimateTokens(contentStr);
+        console.log(`[Gemini Chat] Token estimate: ~${tokenEstimate} | Contents: ${contents.length} messages`);
 
-    const result = await enqueueGeminiRequest(async () => {
-      const ai = getGeminiClient();
-      const tokenEstimate = estimateTokens(contentStr);
-      console.log(`[Gemini Chat] Token estimate: ~${tokenEstimate} | Contents: ${contents.length} messages`);
-
-      return executeGeminiWithTimeout(async () => {
-        const response = await ai.models.generateContent({
-          model: GEMINI_MODEL,
-          contents,
-          config: {
-            systemInstruction: systemInstruction || "You are a professional, calm AI Productivity Coach inside FlowMind AI. Help with planning, focus, and stress management. Keep responses concise and actionable.",
-            temperature: 0.7,
-          },
+        return executeGeminiWithTimeout(async () => {
+          const response = await ai.models.generateContent({
+            model: GEMINI_MODEL,
+            contents,
+            config: {
+              systemInstruction: systemInstruction || "You are a professional, calm AI Productivity Coach inside FlowMind AI. Help with planning, focus, and stress management. Keep responses concise and actionable.",
+              temperature: 0.7,
+            },
+          });
+          return { text: response.text, source: "gemini" };
         });
-        return { text: response.text };
       });
-    });
 
-    // Cache the response
-    setCache(cacheKey, result);
-    res.json(result);
+      console.log("[Gemini Live Response]");
+      // Cache the response
+      setCache(cacheKey, result);
+      res.json(result);
+    } catch (geminiError: any) {
+      const msg = geminiError.message || "";
+      console.log(`[Fallback Activated] Gemini failed, error: ${msg}`);
+
+      let isQuota = false;
+      if (msg.includes("ResourceExhausted") || msg.includes("quota") || msg.includes("429") || msg.includes("Too many pending")) {
+        isQuota = true;
+      }
+
+      const lastUserMessage = contents
+        .filter((c: any) => c.role === "user")
+        .map((c: any) => c.parts?.map((p: any) => p.text).join(" ") || "")
+        .pop() || "";
+      
+      const localResponse = getLocalSmartResponse(lastUserMessage);
+      const fallbackText = localResponse || "AI temporarily unavailable. Please retry shortly.";
+
+      res.json({
+        text: fallbackText,
+        source: "fallback",
+        quotaExhausted: isQuota
+      });
+    }
   } catch (error: any) {
     sanitizeAndRespondError(res, error, "Gemini Chat Error");
   }

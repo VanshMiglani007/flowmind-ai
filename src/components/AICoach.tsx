@@ -110,7 +110,7 @@ function MessageBubble({ msg, isUser, onSpeak, animateReveal }: MessageBubblePro
 }
 
 interface AICoachProps {
-  onSendMessage: (contents: any[], systemInstruction?: string, onRetry?: (attempt: number, errorMsg: string) => void) => Promise<string>;
+  onSendMessage: (contents: any[], systemInstruction?: string, onRetry?: (attempt: number, errorMsg: string) => void) => Promise<{ text: string, source: "gemini" | "fallback" }>;
   tasksContext: any;
   habitsContext: any;
   isOnline: boolean;
@@ -119,6 +119,7 @@ interface AICoachProps {
 }
 
 export default function AICoach({ onSendMessage, tasksContext, habitsContext, isOnline, quotaExhausted, quotaCooldownSeconds }: AICoachProps) {
+  const [aiSource, setAiSource] = useState<"gemini" | "fallback">("gemini");
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const saved = localStorage.getItem("flowmind_coach_messages");
@@ -405,13 +406,14 @@ Habits: ${JSON.stringify(compactHabits)}`;
       const offlineAlertText = `[OFFLINE MODE]\n\nYour message has been saved to the offline queue and will sync automatically when your connection is restored.\n\nAI temporarily unavailable. Please retry shortly.`;
       
       setMessages(prev => [...prev, { role: "model" as const, text: offlineAlertText, timestamp: Date.now() }]);
+      setAiSource("fallback");
       setIsThinking(false);
       isExecutingRef.current = false;
       return;
     }
 
     try {
-      const coachResponse = await onSendMessage(contentsPayload, systemInstruction, (attempt, errorMsg) => {
+      const response = await onSendMessage(contentsPayload, systemInstruction, (attempt, errorMsg) => {
         if (errorMsg.includes("503") || errorMsg.includes("unavailable")) {
           setRetryStatus(`Google Gemini is temporarily overloaded. Retrying... (Attempt ${attempt} of 1)`);
         } else {
@@ -419,12 +421,14 @@ Habits: ${JSON.stringify(compactHabits)}`;
         }
       });
 
-      setMessages(prev => [...prev, { role: "model" as const, text: coachResponse, timestamp: Date.now() }]);
+      setMessages(prev => [...prev, { role: "model" as const, text: response.text, timestamp: Date.now() }]);
+      setAiSource(response.source);
       setCooldownRemaining(4); // 4 seconds spam cooldown
-      speakText(coachResponse);
+      speakText(response.text);
     } catch (err: any) {
       console.error(err);
       const errorMsg = err.message || "";
+      setAiSource("fallback");
       
       // For quota errors, show clean message without large fallback
       if (isQuotaError(errorMsg)) {
@@ -551,7 +555,11 @@ Habits: ${JSON.stringify(compactHabits)}`;
             <BrainCircuit className="w-5 h-5 text-cyan-400 animate-pulse" />
             <div>
               <h3 className="text-sm font-bold text-white">AI Coach</h3>
-              <p className="text-[10px] text-white/40 font-mono">Model: Gemini</p>
+              <div className="flex items-center gap-1.5 mt-0.5 animate-fade-in">
+                <span className={`text-[10px] font-mono flex items-center gap-1 ${aiSource === "gemini" ? "text-green-400" : "text-amber-400 animate-pulse"}`}>
+                  <span>●</span> {aiSource === "gemini" ? "Gemini Live" : "Assist Mode"}
+                </span>
+              </div>
             </div>
           </div>
 

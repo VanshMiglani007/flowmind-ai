@@ -20,7 +20,7 @@ import LandingPage, { OnboardingData } from "./components/LandingPage";
 import { getDemoWorkspaceData } from "./utils/demoLoader";
 import { Sparkles, Award, Zap, WifiOff } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { fetchWithRetry, getOfflineQueue, saveOfflineQueue, isQuotaError } from "./utils/aiHelper";
+import { fetchWithRetry, getOfflineQueue, saveOfflineQueue, isQuotaError, mapAIError } from "./utils/aiHelper";
 
 export default function App() {
   // Landing Page & Onboarding state hydrated from localStorage
@@ -193,7 +193,8 @@ export default function App() {
 
     for (const item of queue) {
       try {
-        const responseText = await handleSendMessageToAI(item.contents, item.systemInstruction);
+        const result = await handleSendMessageToAI(item.contents, item.systemInstruction);
+        const responseText = result.text;
         const savedMessages = localStorage.getItem("flowmind_coach_messages");
         if (savedMessages) {
           const parsed = JSON.parse(savedMessages);
@@ -626,29 +627,49 @@ export default function App() {
   // ==================================================
 
   // 1. CHATBOT BOT SENDER GATEWAY
-  const handleSendMessageToAI = async (contents: any[], systemInstruction?: string, onRetry?: (attempt: number, errorMsg: string) => void) => {
+  const handleSendMessageToAI = async (
+    contents: any[],
+    systemInstruction?: string,
+    onRetry?: (attempt: number, errorMsg: string) => void
+  ): Promise<{ text: string, source: "gemini" | "fallback" }> => {
     try {
       const response = await fetchWithRetry("/api/gemini/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents, systemInstruction })
       }, 1, onRetry);
+
+      const data = await response.json();
+
       if (!response.ok) {
-        const err = await response.json();
-        const errorMsg = err.error || "Failed to communicate with AI Coach.";
+        const errorMsg = data.error || "Failed to communicate with AI Coach.";
         
         // 429 quota error — activate quota protection, do NOT mark offline
         if (response.status === 429 || isQuotaError(errorMsg)) {
           setQuotaExhausted(true);
           setQuotaCooldownSeconds(60);
-          throw new Error(errorMsg);
+        } else {
+          setIsCoachLive(false);
         }
-        throw new Error(errorMsg);
+
+        // Return fallback response structure
+        return {
+          text: mapAIError(errorMsg),
+          source: "fallback"
+        };
       }
-      const data = await response.json();
+
+      if (data.quotaExhausted) {
+        setQuotaExhausted(true);
+        setQuotaCooldownSeconds(60);
+      }
+
       // Successful response: restore live status
       setIsCoachLive(true);
-      return data.text || "Diagnostic synapsing yielded empty payload.";
+      return {
+        text: data.text || "Diagnostic synapsing yielded empty payload.",
+        source: data.source || "gemini"
+      };
     } catch (err: any) {
       const errorMsg = err.message || "";
       // Only mark coach offline for network/server unreachable errors
@@ -656,7 +677,10 @@ export default function App() {
       if (!isQuotaError(errorMsg)) {
         setIsCoachLive(false);
       }
-      throw err;
+      return {
+        text: mapAIError(errorMsg),
+        source: "fallback"
+      };
     }
   };
 
