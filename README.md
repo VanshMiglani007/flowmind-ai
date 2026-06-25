@@ -61,9 +61,19 @@ Powered by a secure server-side **Google Gemini AI API Integration** configured 
 ## ⚡ Key Architectural Integrations
 
 ### 🤖 Google Gemini AI & Google AI Studio
-FlowMind AI uses the cutting-edge **`gemini-2.0-flash`** model to drive its scheduling engine and chatbot:
+FlowMind AI uses the cutting-edge **`gemini-2.0-flash-lite`** model to drive its scheduling engine and chatbot:
 *   **Structured Output Schemas**: All planner and task prioritization data is returned in strict JSON matching custom TypeScript interfaces using the schema builder of the `@google/genai` Node SDK.
 *   **Prompt Engineering**: Context-rich prompts supply user statistics (streak counts, mood logs, deadline proximity) to tailor personalized productivity advice.
+
+### 🛡️ High-Reliability & Quota-Safe Architecture
+To ensure seamless performance under heavy hackathon demo usage and free-tier quotas:
+*   **Gemini-First AI Pipeline**: The system always attempts real dynamic responses from the Gemini API first.
+*   **Intelligent Fallback**: In the event of 429 quota exhaustion, 503 service overload, timeouts, or network failures, the server gracefully falls back to local pre-compiled responses from `localResponses.ts`.
+*   **Request Queueing & Cooldowns**: Serializes Gemini API calls using an in-memory queue (max 1 concurrent request, 3-second cooldown between requests, queue limit of 10) to prevent token explosions.
+*   **Response Caching**: Successful Gemini responses are cached in-memory for 10 minutes (keyed by prompt content hashes) to optimize token consumption and limit API calls.
+*   **Quota Protection UI**: Automatically detects quota exhaustion (429) and displays an amber cooldown banner with a 60s countdown timer while keeping the Coach Live badge active.
+*   **Offline Resilience**: Automatically captures prompts while offline and buffers them in an offline queue, syncing automatically upon network restoration.
+*   **Clean Build & Deployment**: Cleans the production workspace with `rimraf dist` before building to prevent stale assets from being served on Render.
 
 ### 🌐 Render Cloud Hosting
 *   **Production Deployment**: The application is deployed as a single fullstack service on **Render**, serving the optimized React client bundle from the `dist/` directory and handling API routing via Express.
@@ -206,7 +216,7 @@ sequenceDiagram
 
     User->>Server: HTTP POST /api/gemini/chat { contents, mood }
     Note over Server: dotenv loads GEMINI_API_KEY from .env.local
-    Server->>Gemini: Models.generateContent(gemini-2.0-flash)
+    Server->>Gemini: Models.generateContent(gemini-2.0-flash-lite)
     Gemini-->>Server: JSON Response with Content
     Server->>User: JSON Payload
 ```
