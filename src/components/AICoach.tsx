@@ -20,6 +20,7 @@ import {
   mapAIError, 
   pushToOfflineQueue, 
   getLocalFallbackResponse,
+  isQuotaError,
   delay
 } from "../utils/aiHelper";
 
@@ -113,9 +114,11 @@ interface AICoachProps {
   tasksContext: any;
   habitsContext: any;
   isOnline: boolean;
+  quotaExhausted?: boolean;
+  quotaCooldownSeconds?: number;
 }
 
-export default function AICoach({ onSendMessage, tasksContext, habitsContext, isOnline }: AICoachProps) {
+export default function AICoach({ onSendMessage, tasksContext, habitsContext, isOnline, quotaExhausted, quotaCooldownSeconds }: AICoachProps) {
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const saved = localStorage.getItem("flowmind_coach_messages");
@@ -171,6 +174,10 @@ export default function AICoach({ onSendMessage, tasksContext, habitsContext, is
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState("Analyzing your workload...");
+
+  // Duplicate prevention guard (StrictMode safe)
+  const isExecutingRef = useRef(false);
+  const lastSubmittedPromptRef = useRef<string>("");
 
   // Cooldown countdown effect
   useEffect(() => {
@@ -359,22 +366,33 @@ export default function AICoach({ onSendMessage, tasksContext, habitsContext, is
   };
 
   const executeChatFlow = async (queryText: string) => {
+    // Duplicate prevention: block if already executing or same prompt just submitted
+    if (isExecutingRef.current) return;
+    const trimmedQuery = queryText.trim().slice(0, 2000); // Truncate input to 2000 chars max
+    if (!trimmedQuery) return;
+    if (lastSubmittedPromptRef.current === trimmedQuery && isThinking) return;
+
+    isExecutingRef.current = true;
+    lastSubmittedPromptRef.current = trimmedQuery;
+
     // Append User Message
-    const updatedMessages = [...messages, { role: "user" as const, text: queryText, timestamp: Date.now() }];
+    const updatedMessages = [...messages, { role: "user" as const, text: trimmedQuery, timestamp: Date.now() }];
     setMessages(updatedMessages);
     setIsThinking(true);
     setRetryStatus(null);
     synthRef.current?.cancel(); // Stop speaking when user types
 
-    // Prepare full context mapping
-    const systemInstruction = `You are a professional, calm, and supportive AI Productivity Coach inside FlowMind AI. 
-Your goal is to help users overcome procrastination, manage workloads, organize schedules, and achieve sustainable focus.
-Keep your answers supportive, encouraging, motivational, and highly scannable with clear bold points or action items.
-Context regarding current workspace:
-- Current active tasks in workspace: ${JSON.stringify(tasksContext)}
-- Active habits tracking: ${JSON.stringify(habitsContext)}`;
+    // Prepare compact context (max 3 items each)
+    const compactTasks = Array.isArray(tasksContext) ? tasksContext.slice(0, 3) : [];
+    const compactHabits = Array.isArray(habitsContext) ? habitsContext.slice(0, 3) : [];
 
-    const contentsPayload = updatedMessages.map(msg => ({
+    const systemInstruction = `You are a concise AI Productivity Coach inside FlowMind AI. Help with planning, focus, and stress. Keep answers short, supportive, and actionable with clear bullet points.
+Active tasks: ${JSON.stringify(compactTasks)}
+Habits: ${JSON.stringify(compactHabits)}`;
+
+    // Truncate to last 4 messages for token reduction
+    const recentMessages = updatedMessages.slice(-4);
+    const contentsPayload = recentMessages.map(msg => ({
       role: msg.role,
       parts: [{ text: msg.text }]
     }));
@@ -384,22 +402,20 @@ Context regarding current workspace:
       await delay(800);
       pushToOfflineQueue(contentsPayload, systemInstruction);
       
-      const localBackup = getLocalFallbackResponse(queryText, tasksContext, habitsContext);
-      const offlineAlertText = `[OFFLINE MODE]\n\nYour message has been saved to the offline queue and will sync automatically when your connection is restored.\n\n${localBackup}`;
+      const offlineAlertText = `[OFFLINE MODE]\n\nYour message has been saved to the offline queue and will sync automatically when your connection is restored.\n\nAI temporarily unavailable. Please retry shortly.`;
       
       setMessages(prev => [...prev, { role: "model" as const, text: offlineAlertText, timestamp: Date.now() }]);
       setIsThinking(false);
+      isExecutingRef.current = false;
       return;
     }
 
     try {
       const coachResponse = await onSendMessage(contentsPayload, systemInstruction, (attempt, errorMsg) => {
         if (errorMsg.includes("503") || errorMsg.includes("unavailable")) {
-          setRetryStatus(`Google Gemini is heavily overloaded. Retrying connection... (Attempt ${attempt} of 2)`);
-        } else if (errorMsg.includes("429")) {
-          setRetryStatus(`Rate limit hit. Waiting for cooldown and retrying... (Attempt ${attempt} of 2)`);
+          setRetryStatus(`Google Gemini is temporarily overloaded. Retrying... (Attempt ${attempt} of 1)`);
         } else {
-          setRetryStatus(`Connection unresponsive. Retrying... (Attempt ${attempt} of 2)`);
+          setRetryStatus(`Connection unresponsive. Retrying... (Attempt ${attempt} of 1)`);
         }
       });
 
@@ -408,14 +424,19 @@ Context regarding current workspace:
       speakText(coachResponse);
     } catch (err: any) {
       console.error(err);
-      const polishedError = mapAIError(err.message);
-      const localBackup = getLocalFallbackResponse(queryText, tasksContext, habitsContext);
-      const combinedResponse = `${polishedError}\n\n${localBackup}`;
+      const errorMsg = err.message || "";
       
-      setMessages(prev => [...prev, { role: "model" as const, text: combinedResponse, timestamp: Date.now() }]);
+      // For quota errors, show clean message without large fallback
+      if (isQuotaError(errorMsg)) {
+        setMessages(prev => [...prev, { role: "model" as const, text: "AI capacity temporarily exhausted. Please retry in about a minute.", timestamp: Date.now() }]);
+      } else {
+        const polishedError = mapAIError(errorMsg);
+        setMessages(prev => [...prev, { role: "model" as const, text: polishedError, timestamp: Date.now() }]);
+      }
     } finally {
       setIsThinking(false);
       setRetryStatus(null);
+      isExecutingRef.current = false;
     }
   };
 
@@ -588,6 +609,18 @@ Context regarding current workspace:
 
         {/* Chat scrolling board */}
         <div className="flex-1 p-6 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-slate-850">
+          
+          {/* Quota Exhaustion Banner */}
+          {quotaExhausted && (
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-200 flex items-center gap-3 animate-pulse">
+              <ShieldAlert className="w-5 h-5 text-amber-400 flex-shrink-0" />
+              <div>
+                <p className="font-bold font-mono uppercase tracking-wide text-amber-300">AI Capacity Exhausted</p>
+                <p className="mt-0.5">Please retry in about {quotaCooldownSeconds || 60} seconds. Your chat history is preserved.</p>
+              </div>
+            </div>
+          )}
+
           {messages.map((msg, idx) => {
             const isUser = msg.role === "user";
             return (
@@ -673,7 +706,7 @@ Context regarding current workspace:
           <button
             type="submit"
             id="coach-btn-submit"
-            disabled={!inputText.trim() || isThinking || isListening}
+            disabled={!inputText.trim() || isThinking || isListening || quotaExhausted}
             className="p-3 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 text-black font-bold flex items-center justify-center hover:opacity-95 shadow-[0_0_12px_rgba(34,211,238,0.15)] disabled:opacity-50"
           >
             <Send className="w-4.5 h-4.5 stroke-[2.5]" />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { 
   initialTasks, 
   initialHabits, 
@@ -20,7 +20,7 @@ import LandingPage, { OnboardingData } from "./components/LandingPage";
 import { getDemoWorkspaceData } from "./utils/demoLoader";
 import { Sparkles, Award, Zap, WifiOff } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { fetchWithRetry, getOfflineQueue, saveOfflineQueue } from "./utils/aiHelper";
+import { fetchWithRetry, getOfflineQueue, saveOfflineQueue, isQuotaError } from "./utils/aiHelper";
 
 export default function App() {
   // Landing Page & Onboarding state hydrated from localStorage
@@ -176,6 +176,11 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isCoachLive, setIsCoachLive] = useState(false);
 
+  // Quota protection state — separate from "live" status
+  const [quotaExhausted, setQuotaExhausted] = useState(false);
+  const [quotaCooldownSeconds, setQuotaCooldownSeconds] = useState(0);
+  const quotaTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
 
   const handleSyncOfflineQueue = async () => {
     const queue = getOfflineQueue();
@@ -211,14 +216,30 @@ export default function App() {
     }
   };
 
+  // Passive health check — only called on app load and reconnect, NOT on a timer
+  const checkHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health", { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        setIsCoachLive(true);
+      } else {
+        setIsCoachLive(false);
+      }
+    } catch {
+      setIsCoachLive(false);
+    }
+  }, []);
+
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       triggerToast("Cognitive link re-established! Synchronizing buffered logs.", "streak", 15);
+      checkHealth(); // Re-check backend on reconnect
       handleSyncOfflineQueue();
     };
     const handleOffline = () => {
       setIsOnline(false);
+      setIsCoachLive(false);
       triggerToast("Terminal offline. Switching to cognitive backup buffers.", "xp", 0);
     };
 
@@ -231,25 +252,29 @@ export default function App() {
     };
   }, []);
 
-  // Health check polling: determine if AI Coach backend is reachable
+  // One-time health check on app load only (no polling)
   useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval>;
-    const checkHealth = async () => {
-      try {
-        const res = await fetch("/api/health", { signal: AbortSignal.timeout(5000) });
-        if (res.ok) {
-          setIsCoachLive(true);
-        } else {
-          setIsCoachLive(false);
-        }
-      } catch {
-        setIsCoachLive(false);
-      }
-    };
     checkHealth();
-    intervalId = setInterval(checkHealth, 30000);
-    return () => clearInterval(intervalId);
-  }, []);
+  }, [checkHealth]);
+
+  // Quota cooldown timer — counts down 60s after 429 hit
+  useEffect(() => {
+    if (quotaExhausted && quotaCooldownSeconds > 0) {
+      quotaTimerRef.current = setInterval(() => {
+        setQuotaCooldownSeconds(prev => {
+          if (prev <= 1) {
+            setQuotaExhausted(false);
+            if (quotaTimerRef.current) clearInterval(quotaTimerRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => {
+        if (quotaTimerRef.current) clearInterval(quotaTimerRef.current);
+      };
+    }
+  }, [quotaExhausted, quotaCooldownSeconds > 0]);
 
   // Auto-sync state modifications to LocalStorage
   useEffect(() => {
@@ -607,18 +632,30 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents, systemInstruction })
-      }, 2, onRetry);
+      }, 1, onRetry);
       if (!response.ok) {
         const err = await response.json();
-        throw new Error(err.error || "Failed to communicate with AI Coach.");
+        const errorMsg = err.error || "Failed to communicate with AI Coach.";
+        
+        // 429 quota error — activate quota protection, do NOT mark offline
+        if (response.status === 429 || isQuotaError(errorMsg)) {
+          setQuotaExhausted(true);
+          setQuotaCooldownSeconds(60);
+          throw new Error(errorMsg);
+        }
+        throw new Error(errorMsg);
       }
       const data = await response.json();
       // Successful response: restore live status
       setIsCoachLive(true);
       return data.text || "Diagnostic synapsing yielded empty payload.";
-    } catch (err) {
-      // Mark coach as offline only after retries are exhausted
-      setIsCoachLive(false);
+    } catch (err: any) {
+      const errorMsg = err.message || "";
+      // Only mark coach offline for network/server unreachable errors
+      // Do NOT mark offline for quota exhaustion (429)
+      if (!isQuotaError(errorMsg)) {
+        setIsCoachLive(false);
+      }
       throw err;
     }
   };
@@ -986,6 +1023,8 @@ export default function App() {
             tasksContext={tasks.filter(t => !t.completed).map(t => ({ title: t.title, priority: t.priority, procrastinationCount: t.procrastinationCount }))}
             habitsContext={habits.map(h => ({ title: h.title, streak: h.streak }))}
             isOnline={isOnline}
+            quotaExhausted={quotaExhausted}
+            quotaCooldownSeconds={quotaCooldownSeconds}
           />
         )}
 

@@ -1,7 +1,8 @@
 /**
- * FlowMind AI - Production-grade AI Reliability & Resilience Helper
- * Handles automatic silent retries, offline state detection, queueing,
- * and mapping raw API errors into supportive, emotionally intelligent, futuristic messages.
+ * FlowMind AI — Production-grade AI Reliability & Resilience Helper
+ * 
+ * Smart retry logic (no retry on 429), lightweight offline fallback,
+ * and clean error mapping for the frontend.
  */
 
 // Helper to delay execution (cooldown / backoff)
@@ -48,7 +49,7 @@ export function pushToOfflineQueue(contents: any[], systemInstruction?: string):
   return newItem;
 }
 
-// Map raw API errors into beautiful, supportive, and professional FlowMind prompts
+// Map raw API errors into clean, supportive FlowMind messages
 export function mapAIError(errorMsg: string): string {
   const normalized = errorMsg.toLowerCase();
   
@@ -60,78 +61,69 @@ export function mapAIError(errorMsg: string): string {
     return "API Configuration Required: The AI service is not authorized. Please access the Settings page and verify that your GEMINI_API_KEY is correctly configured.";
   }
   
-  if (normalized.includes("503") || normalized.includes("unavailable") || normalized.includes("overloaded") || normalized.includes("429") || normalized.includes("rate limit")) {
-    return "Service Temporarily Busy: FlowMind AI is currently experiencing high demand. Your request has been queued—please wait a brief moment for the queue to clear.";
+  if (normalized.includes("429") || normalized.includes("quota") || normalized.includes("rate limit") || normalized.includes("exhausted")) {
+    return "AI capacity temporarily exhausted. Please retry in about a minute.";
+  }
+
+  if (normalized.includes("503") || normalized.includes("unavailable") || normalized.includes("overloaded")) {
+    return "Service Temporarily Busy: FlowMind AI is experiencing high demand. Please wait a moment and try again.";
   }
   
-  if (normalized.includes("timeout")) {
-    return "Request Timeout: The AI service is taking longer than expected to respond. We are still trying to connect. You can try adjusting your prompt or re-submitting.";
+  if (normalized.includes("timeout") || normalized.includes("timed out")) {
+    return "Request Timeout: The AI service is taking longer than expected. Please try again.";
   }
 
-  // General elegant fallback
-  return "Connection Disrupted: An unexpected error occurred. FlowMind is attempting to restore the connection. In the meantime, you can continue managing your priorities locally.";
-}
-
-// Emotionally intelligent local fallback response generator
-export function getLocalFallbackResponse(query: string, tasks: any[], habits: any[]): string {
-  const queryLower = query.toLowerCase();
-  const activeTasksText = tasks && tasks.length > 0 
-    ? tasks.slice(0, 3).map(t => `• ${t.title} (${t.priority || 'medium'} priority)`).join("\n")
-    : "No urgent tasks scheduled.";
-    
-  const habitsText = habits && habits.length > 0
-    ? habits.slice(0, 3).map(h => `• ${h.title} (Streak: ${h.streak || 0} days)`).join("\n")
-    : "No active habits tracked.";
-
-  if (queryLower.includes("procrastinate") || queryLower.includes("stuck") || queryLower.includes("motivation")) {
-    return `### [FLOWMIND OFFLINE ASSISTANT]
-Procrastination detected. While we re-establish a connection with our live AI service, here is a quick focus-recovery plan:
-
-1. **Reduce Friction**: Choose the smallest, 5-minute step you can take right now to get started.
-2. **Current Priorities**:
-${activeTasksText}
-3. **Focus Timer**: Start a 25-minute Pomodoro focus session. Don't worry about finishing—just focus on beginning.
-
-Remember: *Momentum is built step by step.* Let's tackle just one small action together.`;
-  }
-
-  if (queryLower.includes("stress") || queryLower.includes("exhausted") || queryLower.includes("tired")) {
-    return `### [FLOWMIND OFFLINE CALM GUIDE]
-It sounds like your energy or stress levels are high. Here is a quick wellness and decompression strategy:
-
-1. **Take a Breath**: Close your eyes and complete a 4-7-8 breathing sequence right now (Inhale for 4s, Hold for 7s, Exhale for 8s).
-2. **Simplify Your List**: Let's focus only on what is critical. Your main tasks are:
-${activeTasksText}
-3. **Hydrate & Disconnect**: Step away from your desk for 5 minutes. Physical wellbeing is the foundation of sustainable focus.
-
-Take a guilt-free break to recharge. Your tasks will be waiting when you return.`;
-  }
-
-  // Default scannable helpful feedback
-  return `### [FLOWMIND OFFLINE PLANNER]
-The AI is currently offline, but we have organized your local workspace to help you maintain momentum:
-
-**1. Immediate Priorities:**
-${activeTasksText}
-
-**2. Active Habits:**
-${habitsText}
-
-**3. Recommended Next Steps:**
-- Dedicate 10 minutes to review your high-priority items.
-- Start a Pomodoro focus timer to clear any quick, actionable tasks.
-- Use our Planner tool to schedule breaks between tasks.
-
-We will automatically reconnect and update your coach as soon as your connection is restored!`;
+  // General fallback
+  return "AI temporarily unavailable. Please retry shortly.";
 }
 
 /**
- * Executes a fetch to the AI API with silent retries, cooldown delays, and offline handling
+ * Lightweight static fallback — no large generated responses.
+ */
+export function getLocalFallbackResponse(): string {
+  return "AI temporarily unavailable. Please retry shortly.";
+}
+
+/**
+ * Determine if an error is a quota/rate-limit error (429).
+ */
+export function isQuotaError(errorMsg: string): boolean {
+  const normalized = errorMsg.toLowerCase();
+  return normalized.includes("429") || normalized.includes("quota") || normalized.includes("exhausted") || normalized.includes("rate limit");
+}
+
+/**
+ * Determine if an error is retryable.
+ * Only retry: 503, ECONNRESET, ETIMEDOUT
+ * Do NOT retry: 429, 401, 404
+ */
+function isRetryableError(status: number | null, errorMsg: string): boolean {
+  const normalized = errorMsg.toLowerCase();
+
+  // Never retry quota / auth / model errors
+  if (normalized.includes("429") || normalized.includes("quota") || normalized.includes("exhausted")) return false;
+  if (normalized.includes("401") || normalized.includes("api_key") || normalized.includes("invalid key")) return false;
+  if (normalized.includes("404") || normalized.includes("model")) return false;
+
+  // Retry on transient errors
+  if (status === 503) return true;
+  if (normalized.includes("econnreset") || normalized.includes("etimedout")) return true;
+  if (normalized.includes("503") || normalized.includes("unavailable")) return true;
+
+  return false;
+}
+
+/**
+ * Executes a fetch with smart retry logic.
+ * - Max 1 retry
+ * - 5 second exponential backoff
+ * - Only retries on 503, ECONNRESET, ETIMEDOUT
+ * - Never retries 429 or auth errors
  */
 export async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries: number = 2,
+  maxRetries: number = 1,
   onRetryAttempt?: (attempt: number, errorMsg: string) => void
 ): Promise<Response> {
   // Check online status first
@@ -144,27 +136,33 @@ export async function fetchWithRetry(
     try {
       const response = await fetch(url, options);
       
-      // If server returns rate-limit or temporary overload, we treat it as retryable
-      if (!response.ok && (response.status === 429 || response.status === 503 || response.status === 502) && attempt < maxRetries) {
-        throw new Error(`server_error_${response.status}`);
+      // If server returns an error, check if retryable
+      if (!response.ok && attempt < maxRetries) {
+        const errorMsg = `server_error_${response.status}`;
+        if (isRetryableError(response.status, errorMsg)) {
+          throw new Error(errorMsg);
+        }
       }
       
       return response;
     } catch (err: any) {
       attempt++;
-      if (attempt > maxRetries) {
+      const errorMsg = err.message || "Unknown error";
+
+      // Don't retry non-retryable errors
+      if (!isRetryableError(null, errorMsg) || attempt > maxRetries) {
         throw err;
       }
       
-      // Notify client code about retry attempt to trigger cool UI status
+      // Notify client code about retry attempt
       if (onRetryAttempt) {
-        onRetryAttempt(attempt, err.message || "Unknown error");
+        onRetryAttempt(attempt, errorMsg);
       }
       
-      // Cooldown delay with progressive/exponential backoff: 1.5s, 4.0s
-      const delayMs = attempt === 1 ? 1500 : 4000;
+      // Exponential backoff: 5 seconds
+      const delayMs = 5000 * attempt;
+      console.log(`[Gemini Retry] Attempt ${attempt}/${maxRetries}, waiting ${delayMs}ms`);
       await delay(delayMs);
     }
   }
 }
-
